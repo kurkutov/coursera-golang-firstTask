@@ -9,6 +9,14 @@ import (
 	"strings"
 )
 
+type piece struct {
+	path   string
+	isDir  bool
+	isLast bool
+}
+
+type pieces map[string]*piece
+
 func recursiveScanDir(path, prefix string, printFiles bool) (str string, err error) {
 	dir, err := os.Open(path)
 	if err != nil {
@@ -21,57 +29,63 @@ func recursiveScanDir(path, prefix string, printFiles bool) (str string, err err
 		return
 	}
 
-	var countDir int = 0
-	if !printFiles {
-		for _, f := range fileOrDir {
-			if f.IsDir() {
-				countDir++
-			}
-		}
-	}
-
 	names := []string{} // Слайс строк текущего уровня
-	mmString := map[string]string{}
-	j := 0 // внутренний счетчик дирректорий
-	for i, f := range fileOrDir {
-		if f.IsDir() {
-			j++
-			names = append(names, f.Name())
-			newPath := filepath.Join(path, f.Name())
-			newPrefix := prefix + "│\t"
-			if i == len(fileOrDir)-1 || !printFiles && j == countDir {
-				newPrefix = prefix + "\t"
-			}
-			subLevel, err := recursiveScanDir(newPath, newPrefix, printFiles)
-			if err != nil {
-				return "", err
-			}
-			mmString[f.Name()] = subLevel
+	namesOptions := make(pieces)
+	countDir := 0
+	for _, f := range fileOrDir {
+		if !printFiles && !f.IsDir() {
 			continue
 		}
-		if printFiles {
+		name := f.Name()
+		if !f.IsDir() && printFiles {
 			size := " (empty)"
 			if f.Size() > 0 {
 				size = " (" + fmt.Sprintf("%d", f.Size()) + "b)"
 			}
-			mmString[f.Name()] = ""
-			names = append(names, f.Name()+size)
+			name += size
 		}
+		currOptioons := &piece{filepath.Join(path, f.Name()), false, false}
+		if f.IsDir() {
+			countDir++
+			currOptioons.isDir = true
+		}
+		names = append(names, name)
+		namesOptions[name] = currOptioons
 	}
 
 	sort.Strings(names)
 
+	//определение последнего элемента
+	if !printFiles {
+		for i, n := range names {
+			if i == len(names)-1 || !printFiles && i == countDir {
+				namesOptions[n].isLast = true
+			}
+		}
+	}
+
 	graphics := prefix + "├───"
-	for i, s := range names {
-		if i == len(names)-1 {
+	for i, n := range names {
+		if i == len(fileOrDir)-1 || !printFiles && namesOptions[n].isLast {
 			graphics = prefix + "└───"
 		}
-		if mmString[s] != "" {
-			names[i] = graphics + s + "\n" + mmString[s]
-			continue
+		if namesOptions[n].isDir {
+			newPrefix := prefix + "│\t"
+			if i == len(fileOrDir)-1 || !printFiles && namesOptions[n].isLast {
+				newPrefix = prefix + "\t"
+			}
+			subLvl, err := recursiveScanDir(namesOptions[n].path, newPrefix, printFiles)
+			if err != nil {
+				return "", err
+			}
+			if subLvl != "" {
+				names[i] = graphics + n + "\n" + subLvl
+				continue
+			}
 		}
-		names[i] = graphics + s
+		names[i] = graphics + n
 	}
+
 	return strings.Join(names, "\n"), err
 
 }
@@ -92,7 +106,7 @@ func iterativeScanDir(path string, lvl, cyclePos int, slPath *[]string, param *p
 	slP := *slPath
 
 	var prefix, graphics string
-
+	// рисуем графику
 	if lvl > -1 {
 		if lvl == 0 {
 			if prm[path].isLast {
@@ -132,22 +146,10 @@ func iterativeScanDir(path string, lvl, cyclePos int, slPath *[]string, param *p
 
 	slDirNames := []string{}
 
-	var countDir int = 0
-	if !printFiles {
-		for _, f := range fileOrDir {
-			if f.IsDir() {
-				countDir++
-			}
-		}
-	}
-
-	j := 0 // счетчик директорий внутри цикла
-
-	for i, f := range fileOrDir {
+	for _, f := range fileOrDir {
 		if !f.IsDir() && !printFiles {
 			continue
 		}
-		j++
 		name := f.Name()
 		if printFiles && !f.IsDir() {
 			size := " (empty)"
@@ -159,17 +161,33 @@ func iterativeScanDir(path string, lvl, cyclePos int, slPath *[]string, param *p
 		newPath := filepath.Join(path, f.Name())
 		slDirNames = append(slDirNames, newPath)
 		elemParam := &elem{name, path, prefix, lvl + 1, false, false}
-		if i == len(fileOrDir)-1 || !printFiles && j == countDir {
-			elemParam.isLast = true
-		}
 		if f.IsDir() {
 			elemParam.isDir = true
 		}
 		prm[newPath] = elemParam
 	}
+	// считаем количество директорий, если не нужно отображать файлы
+	var countDir int = 0
+	if !printFiles {
+		for _, f := range fileOrDir {
+			if f.IsDir() {
+				countDir++
+			}
+		}
+	}
 
 	sort.Strings(slDirNames)
 
+	j := 0 // счетчик директорий внутри цикла
+	for i, v := range slDirNames {
+		if prm[v].isDir {
+			j++
+		}
+		if i == len(fileOrDir)-1 || !printFiles && j == countDir {
+			prm[v].isLast = true
+		}
+	}
+	// добавляем элементы в массив путей
 	start := slP[:cyclePos+1]
 	finish := make([]string, len(slP[cyclePos+1:]))
 	copy(finish, slP[cyclePos+1:])
